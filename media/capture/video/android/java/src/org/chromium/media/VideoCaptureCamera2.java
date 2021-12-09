@@ -1,3 +1,7 @@
+/* Copyright 2021 Vuzix Corporation- All Rights Reserved.
+ * Unauthorized copying of this file, via any medium is strictly prohibited.
+ * Proprietary and confidential.
+ */
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -180,6 +184,16 @@ public class VideoCaptureCamera2 extends VideoCapture {
         }
     };
 
+    //VUZIX M400-2454: add a dummy surface to let the camera HAL not to pick "JPEGEncodeSnapshotOnly" pipeline.
+    //After add this dummy surface, it will pick "JPEGEncodePreview" pipeline to work around the color wash out problem.
+    private class CrDummyPreviewReaderListener implements ImageReader.OnImageAvailableListener {
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            Image image = reader.acquireLatestImage();
+        }
+    };
+    // End VUZIX change
+
     // Internal class implementing an ImageReader listener for Preview frames. Gets pinged when a
     // new frame is been captured and downloads it to memory-backed buffers.
     private class CrPreviewReaderListener implements ImageReader.OnImageAvailableListener {
@@ -234,11 +248,17 @@ public class VideoCaptureCamera2 extends VideoCapture {
     // Error paths must signal notifyTakePhotoError().
     private class CrPhotoSessionListener extends CameraCaptureSession.StateCallback {
         private final ImageReader mImageReader;
+        //VUZIX M400-2454
+        private final ImageReader mDummyImageReader;
+        // End VUZIX change
         private final CaptureRequest mPhotoRequest;
         private final long mCallbackId;
         CrPhotoSessionListener(
-                ImageReader imageReader, CaptureRequest photoRequest, long callbackId) {
+            //VUZIX M400-2454
+                ImageReader imageReader, ImageReader dummyImageReader, CaptureRequest photoRequest, long callbackId) {
             mImageReader = imageReader;
+            mDummyImageReader = dummyImageReader;
+            // End VUZIX change
             mPhotoRequest = photoRequest;
             mCallbackId = callbackId;
         }
@@ -279,6 +299,9 @@ public class VideoCaptureCamera2 extends VideoCapture {
         @Override
         public void onClosed(CameraCaptureSession session) {
             mImageReader.close();
+            //VUZIX M400-2454
+            mDummyImageReader.close();
+            // End VUZIX change
         }
     };
 
@@ -925,9 +948,23 @@ public class VideoCaptureCamera2 extends VideoCapture {
                     new CrPhotoReaderListener(mCallbackId);
             imageReader.setOnImageAvailableListener(photoReaderListener, mCameraThreadHandler);
 
-            final List<Surface> surfaceList = new ArrayList<Surface>(1);
+            //VUZIX M400-2454: add a dummy surface to let the camera HAL not to pick "JPEGEncodeSnapshotOnly" pipeline.
+            //After add this dummy surface, it will pick "JPEGEncodePreview" pipeline to work around the color wash out problem.
+            final ImageReader dummyImageReader = ImageReader.newInstance(
+                    (closestSize != null) ? closestSize.getWidth() : mCaptureFormat.getWidth(),
+                    (closestSize != null) ? closestSize.getHeight() : mCaptureFormat.getHeight(),
+                    mCaptureFormat.getPixelFormat(), 1 /* maxImages */);
+
+            final CrDummyPreviewReaderListener dummyPreviewReaderListener =
+                    new CrDummyPreviewReaderListener();
+
+            dummyImageReader.setOnImageAvailableListener(dummyPreviewReaderListener, mCameraThreadHandler);
+
+            final List<Surface> surfaceList = new ArrayList<Surface>(2);
             // TODO(mcasas): release this Surface when not needed, https://crbug.com/643884.
             surfaceList.add(imageReader.getSurface());
+            surfaceList.add(dummyImageReader.getSurface());
+            // End VUZIX change
 
             CaptureRequest.Builder photoRequestBuilder = null;
             try {
@@ -943,7 +980,14 @@ public class VideoCaptureCamera2 extends VideoCapture {
                 notifyTakePhotoError(mCallbackId);
                 return;
             }
+
             photoRequestBuilder.addTarget(imageReader.getSurface());
+
+            //VUZIX M400-2454: add a dummy surface to let the camera HAL not to pick "JPEGEncodeSnapshotOnly" pipeline.
+            //After add this dummy surface, it will pick "JPEGEncodePreview" pipeline to work around the color wash out problem.
+            photoRequestBuilder.addTarget(dummyImageReader.getSurface());
+            // End VUZIX change
+
             photoRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION, getCameraRotation());
 
             TraceEvent.instant("VideoCaptureCamera2.java",
@@ -954,7 +998,7 @@ public class VideoCaptureCamera2 extends VideoCapture {
                     "TakePhotoTask.run calling photoRequestBuilder.build()");
             final CaptureRequest photoRequest = photoRequestBuilder.build();
             final CrPhotoSessionListener sessionListener =
-                    new CrPhotoSessionListener(imageReader, photoRequest, mCallbackId);
+                    new CrPhotoSessionListener(imageReader, dummyImageReader, photoRequest, mCallbackId);
             try {
                 TraceEvent.instant("VideoCaptureCamera2.java",
                         "TakePhotoTask.run calling mCameraDevice.createCaptureSession()");
