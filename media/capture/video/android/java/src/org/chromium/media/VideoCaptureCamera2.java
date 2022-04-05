@@ -1600,9 +1600,6 @@ public class VideoCaptureCamera2 extends VideoCapture {
         // orientation.
         int capture_width = width;
         int capture_height = height;
-        // VUZIX M400-2483: No need to consider to switch between portrait and landscape mode.
-        // Smart glasses only support landscape, so, no need to swith w and h.
-        /*
         if (mCameraNativeOrientation == 0 || mCameraNativeOrientation == 180) {
             Log.d(TAG,
                     "Flipping capture width and height to match device's "
@@ -1610,8 +1607,6 @@ public class VideoCaptureCamera2 extends VideoCapture {
             capture_width = height;
             capture_height = width;
         }
-        */
-        // End VUZIX change
 
         // Find closest supported size.
         final Size[] supportedSizes = streamMap.getOutputSizes(ImageFormat.YUV_420_888);
